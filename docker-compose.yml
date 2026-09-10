@@ -1,0 +1,54 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: hive
+      POSTGRES_PASSWORD: hive
+      POSTGRES_DB: hive
+    ports:
+      - "55432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hive"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: .
+      dockerfile: infra/docker/backend.dev
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://hive:hive@postgres:5432/hive
+      SENSOR_ID: hive-dev
+    ports:
+      - "8000:8000"
+      - "2222:2222"
+      - "8080:8080"
+    volumes:
+      - ./backend:/app
+      - /app/.venv
+      - ssh_host_keys:/data
+
+  dashboard:
+    build:
+      context: .
+      dockerfile: infra/docker/dashboard.dev
+    depends_on:
+      - backend
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8000
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./dashboard:/app
+      - /app/node_modules
+      - /app/.next
+
+volumes:
+  pgdata:
+  ssh_host_keys:
