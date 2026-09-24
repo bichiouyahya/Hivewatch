@@ -25,21 +25,31 @@ async def ensure_sensor(pool: asyncpg.Pool, sensor_id: str, hostname: str) -> No
 
 
 async def upsert_attacker(
-    conn: asyncpg.Connection, ip: str, country: str | None, city: str | None
+    conn: asyncpg.Connection,
+    ip: str,
+    country: str | None,
+    city: str | None,
+    latitude: float | None = None,
+    longitude: float | None = None,
 ) -> uuid.UUID:
+    """COALESCE keeps existing geo data if a later lookup returns nothing."""
     row = await conn.fetchrow(
         """
-        INSERT INTO attackers (ip_address, country, city)
-        VALUES ($1, $2, $3)
+        INSERT INTO attackers (ip_address, country, city, latitude, longitude)
+        VALUES ($1, $2, $3, $4, $5)
         ON CONFLICT (ip_address) DO UPDATE SET
             last_seen = now(),
             country = COALESCE(EXCLUDED.country, attackers.country),
-            city = COALESCE(EXCLUDED.city, attackers.city)
+            city = COALESCE(EXCLUDED.city, attackers.city),
+            latitude = COALESCE(EXCLUDED.latitude, attackers.latitude),
+            longitude = COALESCE(EXCLUDED.longitude, attackers.longitude)
         RETURNING id
         """,
         ip,
         country,
         city,
+        latitude,
+        longitude,
     )
     return row["id"]
 
@@ -66,11 +76,48 @@ async def start_session(
     )
 
 
-async def end_session(conn: asyncpg.Connection, session_id: str, ended_at) -> None:
+async def end_session(
+    conn: asyncpg.Connection,
+    session_id: str,
+    ended_at,
+    recording: str | None = None,
+) -> None:
     await conn.execute(
-        "UPDATE sessions SET ended_at = $1 WHERE id = $2",
+        """
+        UPDATE sessions
+        SET ended_at = $1,
+            recording = COALESCE($3, recording)
+        WHERE id = $2
+        """,
         ended_at,
         uuid.UUID(session_id),
+        recording,
+    )
+
+
+async def upsert_ioc(
+    conn: asyncpg.Connection,
+    ioc_type: str,
+    value: str,
+    source_service: str,
+    base_confidence: int,
+    seen_at,
+) -> None:
+    """Confidence goes up with repeat sightings, capped at 100."""
+    await conn.execute(
+        """
+        INSERT INTO iocs (ioc_type, value, source_service, confidence, first_seen, last_seen)
+        VALUES ($1, $2, $3, $4, $5, $5)
+        ON CONFLICT (ioc_type, value) DO UPDATE SET
+            hit_count = iocs.hit_count + 1,
+            last_seen = EXCLUDED.last_seen,
+            confidence = LEAST(100, $4 + (iocs.hit_count + 1) * 2)
+        """,
+        ioc_type,
+        value,
+        source_service,
+        base_confidence,
+        seen_at,
     )
 
 

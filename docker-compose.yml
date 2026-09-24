@@ -1,16 +1,18 @@
+# Everything has a default, so this works on a fresh clone with no .env file.
+# Copy .env.example to .env only to change something.
 services:
   postgres:
     image: postgres:17-alpine
     environment:
-      POSTGRES_USER: hive
-      POSTGRES_PASSWORD: hive
-      POSTGRES_DB: hive
+      POSTGRES_USER: ${POSTGRES_USER:-hive}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-hive}
+      POSTGRES_DB: ${POSTGRES_DB:-hive}
     ports:
-      - "55432:5432"
+      - "${POSTGRES_PORT:-55432}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U hive"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-hive}"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -23,27 +25,48 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgresql://hive:hive@postgres:5432/hive
-      SENSOR_ID: hive-dev
+      DATABASE_URL: postgresql://${POSTGRES_USER:-hive}:${POSTGRES_PASSWORD:-hive}@postgres:5432/${POSTGRES_DB:-hive}
+      SENSOR_ID: ${SENSOR_ID:-hive-dev}
+      SSH_PASSWORD: ${SSH_PASSWORD:-adminpass}
+      RATE_LIMIT_PER_MINUTE: ${RATE_LIMIT_PER_MINUTE:-120}
+      # empty = API is open
+      API_TOKEN: ${API_TOKEN:-}
+      DASHBOARD_ORIGIN: ${DASHBOARD_ORIGIN:-http://localhost:3000}
+      # optional: add a GeoLite2-City.mmdb here for country/city lookups
+      GEOIP_DB_PATH: ${GEOIP_DB_PATH:-/data/GeoLite2-City.mmdb}
     ports:
-      - "8000:8000"
-      - "2222:2222"
-      - "8080:8080"
+      - "${API_PORT:-8000}:8000"
+      - "${SSH_HONEYPOT_PORT:-2222}:2222"
+      - "${HTTP_HONEYPOT_PORT:-8080}:8080"
     volumes:
       - ./backend:/app
+      # keep the container venv out of the mounted source tree
       - /app/.venv
       - ssh_host_keys:/data
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health').read()"
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 40s
 
   dashboard:
     build:
       context: .
       dockerfile: infra/docker/dashboard.dev
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
     environment:
-      NEXT_PUBLIC_API_URL: http://localhost:8000
+      # used by the browser, so it's the host port and not the service name
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+      NEXT_PUBLIC_API_TOKEN: ${API_TOKEN:-}
     ports:
-      - "3000:3000"
+      - "${DASHBOARD_PORT:-3000}:3000"
     volumes:
       - ./dashboard:/app
       - /app/node_modules

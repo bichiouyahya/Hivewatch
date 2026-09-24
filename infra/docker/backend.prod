@@ -5,11 +5,11 @@ RUN pip install --no-cache-dir uv
 WORKDIR /app
 
 COPY backend/pyproject.toml backend/uv.lock ./
-RUN uv sync --frozen --no-install-project
+RUN uv sync --frozen --no-install-project --no-dev
 
 COPY backend/ .
 
-COPY infra/docker/backend-entrypoint.sh /usr/local/bin/hive-entrypoint
+COPY infra/docker/backend-entrypoint.prod.sh /usr/local/bin/hive-entrypoint
 RUN chmod +x /usr/local/bin/hive-entrypoint
 
 # 8000 API, 2222 SSH honeypot, 8080 HTTP honeypot

@@ -10,6 +10,7 @@ import os
 
 from app.bus import Broadcaster
 from app.http_routes import SERVER_HEADER, build_response
+from app.ratelimit import SlidingWindowLimiter
 from app.schemas import Event
 
 logger = logging.getLogger("hive.httpd")
@@ -21,6 +22,9 @@ READ_TIMEOUT_SECONDS = 5
 MAX_HEADER_LINES = 100
 MAX_BODY_BYTES = 64 * 1024
 MAX_LOGGED_BODY_CHARS = 4096
+RATE_LIMIT_PER_MINUTE = int(os.environ.get("RATE_LIMIT_PER_MINUTE", "120"))
+
+_limiter = SlidingWindowLimiter(RATE_LIMIT_PER_MINUTE)
 
 
 def parse_request_line(raw: bytes) -> tuple[str, str, str]:
@@ -43,7 +47,7 @@ def parse_header_line(raw: bytes) -> tuple[str, str] | None:
 
 
 def build_raw_response(status: int, content_type: str, body: str) -> bytes:
-    reason = {200: "OK", 404: "Not Found"}.get(status, "OK")
+    reason = {200: "OK", 404: "Not Found", 429: "Too Many Requests"}.get(status, "OK")
     body_bytes = body.encode("utf-8")
     headers = (
         f"HTTP/1.1 {status} {reason}\r\n"
@@ -62,6 +66,22 @@ def make_handler(bus: Broadcaster):
     ) -> None:
         peer = writer.get_extra_info("peername")
         source_ip = peer[0] if peer else "0.0.0.0"
+
+        if not _limiter.allow(source_ip):
+            if _limiter.should_report(source_ip):
+                logger.warning(
+                    "rate limit exceeded for %s (%d/min) -- returning 429",
+                    source_ip,
+                    RATE_LIMIT_PER_MINUTE,
+                )
+            try:
+                writer.write(build_raw_response(429, "text/plain", "Too Many Requests\n"))
+                await writer.drain()
+            except (ConnectionError, RuntimeError):
+                pass
+            finally:
+                writer.close()
+            return
 
         try:
             try:

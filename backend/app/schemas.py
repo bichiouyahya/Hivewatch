@@ -53,6 +53,7 @@ class SessionOut(BaseModel):
     started_at: datetime
     ended_at: datetime | None
     command_count: int
+    has_recording: bool = False
 
 
 class SessionsPage(BaseModel):
@@ -60,14 +61,79 @@ class SessionsPage(BaseModel):
     items: list[SessionOut]
 
 
+class IocOut(BaseModel):
+    ioc_type: str
+    value: str
+    source_service: str
+    hit_count: int
+    confidence: int
+    first_seen: datetime
+    last_seen: datetime
+
+
+class IocsPage(BaseModel):
+    total: int
+    items: list[IocOut]
+
+
 class StatsOverview(BaseModel):
     total_events: int
     unique_attackers: int
     active_sessions: int
     commands_captured: int
+    events_last_minute: int
     events_by_service: dict[str, int]
 
 
 class CountryCount(BaseModel):
     country: str
     count: int
+
+
+class CommandStat(BaseModel):
+    command: str
+    executions: int
+    unique_attackers: int
+    first_seen: datetime
+    last_seen: datetime
+    mitre_techniques: list[str]
+
+
+class AttackerStat(BaseModel):
+    source_ip: str
+    country: str | None
+    attacks: int
+    services: list[str]
+    technique_count: int
+    score: int
+
+
+class TechniqueHeat(BaseModel):
+    technique: str
+    name: str
+    detections: int
+    attackers: int
+    last_seen: datetime | None
+
+
+class TacticHeat(BaseModel):
+    tactic: str
+    techniques: list[TechniqueHeat]
+
+
+class AttackOrigin(BaseModel):
+    source_ip: str
+    country: str | None
+    city: str | None
+    latitude: float
+    longitude: float
+    events: int
+
+
+class AlertOut(BaseModel):
+    severity: str
+    technique: str
+    title: str
+    service: str
+    source_ip: str
+    created_at: datetime

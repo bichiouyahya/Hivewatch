@@ -1,5 +1,5 @@
-"""Event pipeline: GeoIP lookup, MITRE detection, then save to Postgres
-and forward the enriched event.
+"""Event pipeline: GeoIP lookup, MITRE detection, IOC extraction, then
+save to Postgres and forward the enriched event.
 """
 
 import logging
@@ -10,6 +10,7 @@ from app import storage
 from app.bus import Broadcaster
 from app.credentials import extract as extract_credentials
 from app.geoip import lookup as geoip_lookup
+from app.ioc import extract as extract_iocs
 from app.mitre import SlidingWindowDetector, match_command, match_http_path
 from app.schemas import EnrichedEvent, Event
 
@@ -43,12 +44,21 @@ async def process_event(
     detector: SlidingWindowDetector,
     enriched_bus: Broadcaster,
 ) -> None:
-    country, city = geoip_lookup(str(event.source_ip))
+    geo = geoip_lookup(str(event.source_ip))
+    country, city = geo.country, geo.city
     techniques = detect_techniques(event, detector)
+    indicators = extract_iocs(event)
+
+    # store the transcript on the session row, not in the event payload
+    payload = event.payload
+    recording = None
+    if event.event_type == "session_end" and "recording" in payload:
+        payload = {k: v for k, v in payload.items() if k != "recording"}
+        recording = event.payload["recording"]
 
     async with pool.acquire() as conn, conn.transaction():
         attacker_id = await storage.upsert_attacker(
-            conn, str(event.source_ip), country, city
+            conn, str(event.source_ip), country, city, geo.latitude, geo.longitude
         )
 
         if event.event_type == "session_start" and event.session_id:
@@ -61,7 +71,9 @@ async def process_event(
                 event.occurred_at,
             )
         elif event.event_type == "session_end" and event.session_id:
-            await storage.end_session(conn, event.session_id, event.occurred_at)
+            await storage.end_session(
+                conn, event.session_id, event.occurred_at, recording
+            )
 
         event_id = await storage.insert_event(
             conn,
@@ -71,7 +83,7 @@ async def process_event(
             event.service,
             event.event_type,
             str(event.source_ip),
-            event.payload,
+            payload,
             techniques,
         )
 
@@ -80,6 +92,16 @@ async def process_event(
             username, password = credentials
             await storage.insert_credentials(
                 conn, event_id, event.service, username, password
+            )
+
+        for indicator in indicators:
+            await storage.upsert_ioc(
+                conn,
+                indicator.type,
+                indicator.value,
+                indicator.source_service,
+                indicator.base_confidence,
+                event.occurred_at,
             )
 
     logger.info(

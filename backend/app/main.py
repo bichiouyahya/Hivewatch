@@ -1,12 +1,14 @@
 import asyncio
 import logging
 import os
+import secrets
 import socket
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from app import storage
 from app.api import router as api_router
@@ -20,6 +22,8 @@ logger = logging.getLogger("hive")
 
 SENSOR_ID = os.environ.get("SENSOR_ID", "hive-dev")
 DASHBOARD_ORIGIN = os.environ.get("DASHBOARD_ORIGIN", "http://localhost:3000")
+# empty = API is open
+API_TOKEN = os.environ.get("API_TOKEN", "")
 
 
 @asynccontextmanager
@@ -56,4 +60,33 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def require_api_token(request: Request, call_next):
+    """Optional bearer token check on /api/*, enabled by setting
+    API_TOKEN. /api/health and CORS preflights stay open.
+
+    This is a shared secret, not per-user auth. In production the real
+    gate is basic auth on the nginx proxy.
+    """
+    path = request.url.path
+    if (
+        API_TOKEN
+        and path.startswith("/api/")
+        and path != "/api/health"
+        and request.method != "OPTIONS"
+    ):
+        header = request.headers.get("authorization", "")
+        supplied = (
+            header[7:].strip()
+            if header[:7].lower() == "bearer "
+            # also allowed as ?token= since download links can't set headers
+            else request.query_params.get("token", "")
+        )
+        if not secrets.compare_digest(supplied, API_TOKEN):
+            return JSONResponse({"detail": "unauthorized"}, status_code=401)
+    return await call_next(request)
+
+
 app.include_router(api_router)

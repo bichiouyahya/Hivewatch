@@ -7,6 +7,7 @@ events are stored without country/city. Private IPs never resolve.
 import logging
 import os
 from pathlib import Path
+from typing import NamedTuple
 
 import geoip2.database
 import geoip2.errors
@@ -38,13 +39,25 @@ def _get_reader() -> geoip2.database.Reader | None:
     return _reader
 
 
-def lookup(ip: str) -> tuple[str | None, str | None]:
-    """Returns (country, city), either of which may be None."""
+class GeoResult(NamedTuple):
+    country: str | None = None
+    city: str | None = None
+    latitude: float | None = None
+    longitude: float | None = None
+
+
+def lookup(ip: str) -> GeoResult:
+    """Look up an IP. Any field of the result may be None."""
     reader = _get_reader()
     if reader is None:
-        return None, None
+        return GeoResult()
     try:
         response = reader.city(ip)
     except (geoip2.errors.AddressNotFoundError, ValueError):
-        return None, None
-    return response.country.name, response.city.name
+        return GeoResult()
+    return GeoResult(
+        country=response.country.name,
+        city=response.city.name,
+        latitude=response.location.latitude,
+        longitude=response.location.longitude,
+    )

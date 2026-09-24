@@ -9,17 +9,48 @@ import re
 from collections import defaultdict, deque
 from datetime import datetime, timedelta
 
-TECHNIQUE_NAMES: dict[str, str] = {
-    "T1082": "Discovery: System Information Discovery",
-    "T1033": "Discovery: System Owner/User Discovery",
-    "T1083": "Discovery: File and Directory Discovery",
-    "T1552.001": "Credential Access: Credentials In Files",
-    "T1105": "Command and Control: Ingress Tool Transfer",
-    "T1053.003": "Persistence: Scheduled Task/Job - Cron",
-    "T1110": "Credential Access: Brute Force",
-    "T1046": "Discovery: Network Service Scanning",
-    "T1595.002": "Reconnaissance: Active Scanning - Vulnerability Scanning",
+# tactics in kill-chain order, used for the heatmap columns
+TACTIC_ORDER: tuple[str, ...] = (
+    "Reconnaissance",
+    "Initial Access",
+    "Execution",
+    "Persistence",
+    "Credential Access",
+    "Discovery",
+    "Command and Control",
+    "Impact",
+)
+
+# every technique the rules can produce: id -> (name, tactic)
+TECHNIQUE_CATALOG: dict[str, tuple[str, str]] = {
+    "T1595.002": ("Active Scanning: Vulnerability Scanning", "Reconnaissance"),
+    "T1053.003": ("Scheduled Task/Job: Cron", "Persistence"),
+    "T1110": ("Brute Force", "Credential Access"),
+    "T1552.001": ("Credentials In Files", "Credential Access"),
+    "T1082": ("System Information Discovery", "Discovery"),
+    "T1033": ("System Owner/User Discovery", "Discovery"),
+    "T1083": ("File and Directory Discovery", "Discovery"),
+    "T1046": ("Network Service Scanning", "Discovery"),
+    "T1105": ("Ingress Tool Transfer", "Command and Control"),
 }
+
+# "Tactic: Name" labels for alerts and logs
+TECHNIQUE_NAMES: dict[str, str] = {
+    tid: f"{tactic}: {name}" for tid, (name, tactic) in TECHNIQUE_CATALOG.items()
+}
+
+# these count as a breach attempt rather than recon
+CRITICAL_TECHNIQUES = frozenset({"T1110", "T1552.001"})
+
+
+def severity_for(techniques: list[str] | None) -> str:
+    """Severity label shared by the API and the dashboard."""
+    if not techniques:
+        return "LOW"
+    if CRITICAL_TECHNIQUES.intersection(techniques):
+        return "CRITICAL"
+    return "HIGH"
+
 
 COMMAND_RULES: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"^cat\s+.*(passwd|shadow|\.ssh/|\.env|id_rsa)", re.IGNORECASE), "T1552.001"),
